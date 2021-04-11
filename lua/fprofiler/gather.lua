@@ -1,13 +1,22 @@
 local timeMeasurementFunc = SysTime
 
+local getupvalue = debug.getupvalue
+local getlocal = debug.getlocal
+local getinfo = debug.getinfo
+
+local tableInsert = table.insert
+
+local rawget = rawget
+local rawset = rawset
+
 -- Helper function, created by some ancient Lua dev
 -- Retrieves the local variables and their values of a function
 local function getupvalues(f)
-    local t, i, k, v = {}, 1, debug.getupvalue(f, 1)
+    local t, i, k, v = {}, 1, getupvalue(f, 1)
     while k do
         t[k] = v
         i = i + 1
-        k,v = debug.getupvalue(f, i)
+        k,v = getupvalue(f, i)
     end
     return t
 end
@@ -22,7 +31,7 @@ local function getlocals(level)
     local vars = {}
 
     while true do
-        name, value = debug.getlocal(level, i)
+        name, value = getlocal(level, i)
 
         if not name then break end
 
@@ -130,28 +139,44 @@ local focusDepth = 0
 
 -- Called when a function in the code is called
 local function registerFunctionCall(funcInfo)
-    local func = funcInfo.func
+    -- local func = funcInfo.func
+    local func = rawget(funcInfo, "func")
 
     -- Update call counts
-    callcounts[func] = (callcounts[func] or 0) + 1
+    -- callcounts[func] = (callcounts[func] or 0) + 1
+    rawset(callcounts, func, (rawget(callcounts, func) or 0) + 1)
 
     -- Increase recursion depth for this function
-    recursiveCount[func] = (recursiveCount[func] or 0) + 1
+    -- recursiveCount[func] = (recursiveCount[func] or 0) + 1
+    rawset(recursiveCount, func, (rawget(recursiveCount, func) or 0) + 1)
 
     -- Store function info
-    local funcname = funcInfo.name or ""
-    functionNames[func] = functionNames[func] or {}
-    functionNames[func][funcname] = functionNames[func][funcname] or
-        { namewhat = funcInfo.namewhat,
-          nparams = funcInfo.nparams
+    -- local funcname = funcInfo.name or ""
+    local funcname = rawget(funcInfo, "name") or ""
+
+    -- functionNames[func] = functionNames[func] or {}
+    rawset(functionNames, func, rawget(functionNames, "func") or {})
+
+    -- functionNames[func][funcname] = functionNames[func][funcname] or
+    --     { namewhat = funcInfo.namewhat,
+    --       nparams = funcInfo.nparams
+    --     }
+    rawset(rawget(functionNames, func), funcname, rawget(rawget(functionNames, func), funcname) or
+        {
+            namewhat = rawget(funcInfo, "namewhat"),
+            nparams = rawget(funcInfo, "nparams")
         }
+    )
 
     local time = timeMeasurementFunc()
 
     -- Update inclusive function times,
     -- only when we're on the first recursive call
-    if recursiveCount[func] == 1 then
-        startTimes[func] = time
+    -- if recursiveCount[func] == 1 then
+    --     startTimes[func] = time
+    -- end
+    if rawget(recursiveCount, func) == 1 then
+        rawset(startTimes, func, time)
     end
 end
 
@@ -159,64 +184,108 @@ end
 -- Called when a function returns
 local function registerReturn(funcInfo)
     local time = timeMeasurementFunc()
-    local func = funcInfo.func
-    local runtime = time - startTimes[func]
+    local func = rawget(funcInfo, "func")
+    local runtime = time - rawget(startTimes, func)
 
     -- Update inclusive function time
     -- Only update on the topmost call, to prevent recursive
     -- calls for being counted multiple times.
-    if recursiveCount[func] == 1 then
-        inclusiveTimes[func] = (inclusiveTimes[func] or 0) + runtime
+    -- if recursiveCount[func] == 1 then
+    --     inclusiveTimes[func] = (inclusiveTimes[func] or 0) + runtime
+    -- end
+    if rawget(recursiveCount, func) == 1 then
+        rawset(inclusiveTimes, func, (rawget(inclusiveTimes, func) or 0) + runtime)
     end
 
     -- Maintain recursion depth
-    recursiveCount[func] = recursiveCount[func] - 1
+    -- recursiveCount[func] = recursiveCount[func] - 1
+    rawset(recursiveCount, func, rawget(recursiveCount, func) - 1)
 
     -- Update top n list
     -- This path will be taken most often: the function isn't special
     -- Also only counts the top recursion
-    if runtime <= mostExpensiveSingleCalls[50].runtime or recursiveCount[func] > 1 then return end
+    -- if runtime <= mostExpensiveSingleCalls[50].runtime or recursiveCount[func] > 1 then return end
+    if runtime <= mostExpensiveSingleCalls[50].runtime or rawget(recursiveCount, func) > 1 then return end
 
     -- If the function already appears in the top 10, replace it or discard the result
-    if mostExpensiveSingleDict[func] then
-        local i = mostExpensiveSingleDict[func]
+    if rawget(mostExpensiveSingleDict, func) then
+        local i = rawget(mostExpensiveSingleDict, func)
 
         -- Discard this info
-        if runtime < mostExpensiveSingleCalls[i].runtime then return end
+        --if runtime < mostExpensiveSingleCalls[i].runtime then return end
+        if runtime < rawget(rawget(mostExpensiveSingleCalls, i), "runtime") then return end
 
         -- Update the entry
-        mostExpensiveSingleCalls[i].runtime = runtime
-        mostExpensiveSingleCalls[i].upvalues = getupvalues(func)
-        mostExpensiveSingleCalls[i].locals = getlocals(5)
-        mostExpensiveSingleCalls[i].info = funcInfo
-        mostExpensiveSingleCalls[i].func = func
+        -- mostExpensiveSingleCalls[i].runtime = runtime
+        -- mostExpensiveSingleCalls[i].upvalues = getupvalues(func)
+        -- mostExpensiveSingleCalls[i].locals = getlocals(5)
+        -- mostExpensiveSingleCalls[i].info = funcInfo
+        -- mostExpensiveSingleCalls[i].func = func
+        rawset(mostExpensiveSingleCalls, i, {
+            runtime = runtime,
+            upvalues = getupvalues(func),
+            locals = getlocals(5),
+            info = funcInfo,
+            func = func
+        })
 
         -- Move the updated entry up the top 10 list if applicable
-        while i > 1 and runtime > mostExpensiveSingleCalls[i - 1].runtime do
-            mostExpensiveSingleDict[mostExpensiveSingleCalls[i - 1].func] = i
-            mostExpensiveSingleCalls[i - 1], mostExpensiveSingleCalls[i] = mostExpensiveSingleCalls[i], mostExpensiveSingleCalls[i - 1]
+        -- while i > 1 and runtime > mostExpensiveSingleCalls[i - 1].runtime do
+        --     mostExpensiveSingleDict[mostExpensiveSingleCalls[i - 1].func] = i
+        --     mostExpensiveSingleCalls[i - 1], mostExpensiveSingleCalls[i] = mostExpensiveSingleCalls[i], mostExpensiveSingleCalls[i - 1]
+        --     i = i - 1
+        -- end
+        while i > 1 do
+            local nextMostExpensiveSingleCall = rawget(mostExpensiveSingleCalls, i - 1)
+            if runtime <= rawget(nextMostExpensiveSingleCall, "runtime") then break end
+
+            rawset(mostExpensiveSingleDict, rawget(nextMostExpensiveSingleCall, "func"), i)
+
+            rawset(mostExpensiveSingleCalls, i - 1, rawget(mostExpensiveSingleCalls, i))
+            rawset(mostExpensiveSingleCalls, i, rawget(mostExpensiveSingleCalls, i - 1))
             i = i - 1
         end
 
-        mostExpensiveSingleDict[func] = i
+        rawset(mostExpensiveSingleDict, func, i)
 
         return
     end
 
     -- Knowing that the function belongs in the top n, find its position
     local i = 50
-    while i >= 1 and runtime > mostExpensiveSingleCalls[i].runtime do
-        -- Update the dictionary
-        -- All functions faster than the current one move down the list
-        if not mostExpensiveSingleCalls[i].func then i = i - 1 continue end
-        mostExpensiveSingleDict[mostExpensiveSingleCalls[i].func] = i + 1
+    -- while i >= 1 and runtime > mostExpensiveSingleCalls[i].runtime do
+    --     -- Update the dictionary
+    --     -- All functions faster than the current one move down the list
+    --     if not mostExpensiveSingleCalls[i].func then i = i - 1 continue end
+    --     mostExpensiveSingleDict[mostExpensiveSingleCalls[i].func] = i + 1
+
+    --     i = i - 1
+    -- end
+
+    while i >= 1 do
+        local mostExpensiveSingleCall = rawget(mostExpensiveSingleCalls, i)
+        if runtime <= rawget(mostExpensiveSingleCall, "runtime") then break end
+
+        local thisCallFunc = rawget(mostExpensiveSingleCall, "func")
+        if thisCallFunc then
+            rawset(mostExpensiveSingleDict, thisCallFunc, i + 1)
+        end
 
         i = i - 1
     end
 
     -- Insert the expensive call in the top n
-    mostExpensiveSingleDict[func] = i + 1
-    table.insert(mostExpensiveSingleCalls, i + 1,
+    -- mostExpensiveSingleDict[func] = i + 1
+    -- table.insert(mostExpensiveSingleCalls, i + 1,
+    --     {
+    --         func = func,
+    --         runtime = runtime,
+    --         info = funcInfo,
+    --         upvalues = getupvalues(func),
+    --         locals = getlocals(5)
+    --     })
+    rawset(mostExpensiveSingleDict, func, i + 1)
+    tableInsert(mostExpensiveSingleCalls, i + 1,
         {
             func = func,
             runtime = runtime,
@@ -228,17 +297,23 @@ local function registerReturn(funcInfo)
 
     -- What was previously the 50th most expensive function
     -- is now kicked out of the top 10
-    if mostExpensiveSingleCalls[51].func then
-        mostExpensiveSingleDict[mostExpensiveSingleCalls[51].func] = nil
+    -- if mostExpensiveSingleCalls[51].func then
+    --     mostExpensiveSingleDict[mostExpensiveSingleCalls[51].func] = nil
+    -- end
+    -- mostExpensiveSingleCalls[51] = nil
+
+    local toKick = rawget(rawget(mostExpensiveSingleCalls, 51), "func")
+    if toKick then
+        rawset(mostExpensiveSingleDict, toKick, nil)
     end
-    mostExpensiveSingleCalls[51] = nil
+    rawset(mostExpensiveSingleCalls, 51, nil)
 end
 
 
 -- Called on any Lua event
 local function onLuaEvent(event, focus)
-    local info = debug.getinfo(3)
-    local func = info.func
+    local info = getinfo(3)
+    local func = rawget(info, "func")
 
     if event == "call" or event == "tail call" then
         -- Only track the focussed function and the functions
@@ -250,7 +325,8 @@ local function onLuaEvent(event, focus)
     else
         -- Functions that return right after the call to FProfiler.Internal.start()
         -- are not to be counted
-        if not recursiveCount[func] or recursiveCount[func] == 0 then return end
+        local recursiveFuncCount = rawget(recursiveCount, func)
+        if not recursiveFuncCount or recursiveFuncCount == 0 then return end
 
         if focus == func then focusDepth = focusDepth - 1 end
         if focus and focusDepth == 0 then return end
