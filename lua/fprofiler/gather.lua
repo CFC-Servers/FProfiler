@@ -1,7 +1,5 @@
 local timeMeasurementFunc = SysTime
 
-local getupvalue = debug.getupvalue
-local getlocal = debug.getlocal
 local getinfo = debug.getinfo
 
 local tableInsert = table.insert
@@ -9,39 +7,10 @@ local tableInsert = table.insert
 local rawget = rawget
 local rawset = rawset
 
--- Helper function, created by some ancient Lua dev
--- Retrieves the local variables and their values of a function
-local function getupvalues(f)
-    local t, i, k, v = {}, 1, getupvalue(f, 1)
-    while k do
-        t[k] = v
-        i = i + 1
-        k,v = getupvalue(f, i)
-    end
-    return t
-end
-
 -- Helper function
 -- Get all local variables
 local NIL = {}
 setmetatable(NIL, {__tostring = function() return "nil" end})
-local function getlocals(level)
-    local i = 1
-    local name, value
-    local vars = {}
-
-    while true do
-        name, value = getlocal(level, i)
-
-        if not name then break end
-
-        value = value == nil and NIL or value
-        vars[name] = value
-        i = i + 1
-    end
-
-    return vars
-end
 
 --[[-------------------------------------------------------------------------
 Call counts:
@@ -223,8 +192,6 @@ local function registerReturn(funcInfo)
         -- mostExpensiveSingleCalls[i].func = func
         rawset(mostExpensiveSingleCalls, i, {
             runtime = runtime,
-            upvalues = getupvalues(func),
-            locals = getlocals(5),
             info = funcInfo,
             func = func
         })
@@ -290,8 +257,6 @@ local function registerReturn(funcInfo)
             func = func,
             runtime = runtime,
             info = funcInfo,
-            upvalues = getupvalues(func),
-            locals = getlocals(5)
         })
 
 
